@@ -1,8 +1,9 @@
 name: Deploy frontend application
-on:
+'on':
   push:
-    branches: [main]
-
+    branches:
+      - main
+      - feature-new-port  # 添加新分支触发
 jobs:
   docker:
     runs-on: ubuntu-latest
@@ -29,25 +30,51 @@ jobs:
           push: true
           tags: childaz/234-deploylab-frontend:latest
 
-      - name: Copy files to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.HOST_SERVER }}
-          username: ${{ secrets.HOST_USER_NAME }}
-          key: ${{ secrets.HOST_SSH_PRIVATE_KEY }}
-          source: "docker-compose.yml"
-          target: "/home/ubuntu/frontend"
-
-      - name: Deploy on server
+      - name: Create remote directory
         uses: appleboy/ssh-action@v1.2.1
         with:
           host: ${{ secrets.HOST_SERVER }}
           username: ${{ secrets.HOST_USER_NAME }}
           key: ${{ secrets.HOST_SSH_PRIVATE_KEY }}
           script: |
+            mkdir -p /home/ubuntu/frontend
+            chmod 755 /home/ubuntu/frontend
+
+      - name: Upload compose files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST_SERVER }}
+          username: ${{ secrets.HOST_USER_NAME }}
+          key: ${{ secrets.HOST_SSH_PRIVATE_KEY }}
+          source: "docker-compose*.yml"  # 上传所有匹配的compose文件
+          target: "/home/ubuntu/frontend/"
+
+      - name: Deploy with Docker Compose
+        uses: appleboy/ssh-action@v1.2.1
+        with:
+          host: ${{ secrets.HOST_SERVER }}
+          username: ${{ secrets.HOST_USER_NAME }}
+          key: ${{ secrets.HOST_SSH_PRIVATE_KEY }}
+          script: |
+            echo "=== Current directory ==="
+            pwd
+            echo "=== Directory contents ==="
+            ls -la /home/ubuntu/frontend
+            echo "=== Branch: ${{ github.ref }} ==="
+
             cd /home/ubuntu/frontend
-            docker login -u ${{ secrets.DOCKER_HUB_USERNAME }} -p ${{ secrets.DOCKER_HUB_TOKEN }}
-            docker compose down
-            docker compose pull
-            docker compose up -d
-            rm -rf /home/ubuntu/frontend
+
+            # 根据分支选择部署配置
+            if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+              echo "=== Deploying to port 8086 ==="
+              docker compose -f docker-compose.yml down || true
+              docker compose -f docker-compose.yml pull
+              docker compose -f docker-compose.yml up -d
+            elif [[ "${{ github.ref }}" == "refs/heads/feature-new-port" ]]; then
+              echo "=== Deploying to port 9999 ==="
+              docker compose -f docker-compose-prod.yml down || true
+              docker compose -f docker-compose-prod.yml pull
+              docker compose -f docker-compose-prod.yml up -d
+            else
+              echo "Unknown branch, skipping deployment"
+            fi
